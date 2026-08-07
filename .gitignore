@@ -18,3 +18,4 @@ mlruns/
 mlartifacts/
 
 .DS_Store
+.pytest_cache/
