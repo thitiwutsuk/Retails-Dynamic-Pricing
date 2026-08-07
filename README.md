@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Retails-Dynamic-Pricing
 =======
 # Retail Store Inventory — Forecasting, Inventory Optimization & Dynamic Pricing
