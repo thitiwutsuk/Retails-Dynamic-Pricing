@@ -29,15 +29,15 @@ Retail Store Inventory/
 │       ├── train.parquet                     # 2022-01-01 -> 2023-06-30
 │       ├── val.parquet                       # 2023-07-01 -> 2023-09-30
 │       ├── test.parquet                      # 2023-10-01 -> 2024-01-01 (held out, touched only for final evaluation)
-│       └── forecasts/                        # per-model forecast outputs from Stage 4a (populated once Challenge 1 modeling runs)
+│       └── forecasts/                        # baseline/arima/lstm forecast outputs from Stage 4a
 │
 ├── notebooks/                                # notebooks import from src/, never the other way around
 │   ├── 00_data_audit.ipynb                   # Stage 2a — structural/quality checks, produces cleaned_panel.parquet
 │   ├── 01_eda.ipynb                          # Stage 2b — exploratory analysis, produces reports/figures/*.png
 │   ├── 02_data_preparation.ipynb             # Stage 3 — feature engineering + train/val/test split
-│   ├── 10_arima_baseline.ipynb               # Stage 4a — SARIMA per-series baseline (planned)
-│   ├── 11_lstm_forecasting.ipynb             # Stage 4a — PyTorch LSTM global model (planned)
-│   ├── 12_forecast_comparison.ipynb          # Stage 5 — ARIMA vs LSTM vs naive baselines comparison (planned)
+│   ├── 10_arima_baseline.ipynb               # Stage 4a — naive/seasonal-naive/dataset baselines + per-series SARIMA
+│   ├── 11_lstm_forecasting.ipynb             # Stage 4a — PyTorch global LSTM, trained + evaluated
+│   ├── 12_forecast_comparison.ipynb          # Stage 5 (embedded) — ARIMA vs LSTM vs baselines, MASE + Diebold-Mariano
 │   ├── 20_inventory_optimization.ipynb       # Stage 4b — safety stock / ROP / EOQ + simulation (planned)
 │   ├── 30_price_elasticity.ipynb             # Stage 4c — log-log elasticity regression (planned)
 │   └── 31_dynamic_pricing_optimization.ipynb # Stage 4c — revenue-maximizing price search (planned)
@@ -50,10 +50,10 @@ Retail Store Inventory/
 │   │   └── features.py                       # select_series(), engineer_features(), build_features_full() (Stage 3)
 │   ├── forecasting/
 │   │   ├── splits.py                         # time_split(): chronological train/val/test, reused by every stage
-│   │   ├── arima_model.py                    # per-series SARIMA fit/predict (planned)
-│   │   ├── lstm_model.py                     # PyTorch windowing + global LSTM model (planned)
-│   │   ├── evaluate.py                       # MAE / RMSE / sMAPE / MASE metrics (planned)
-│   │   └── backtest.py                       # rolling-origin backtesting harness (planned)
+│   │   ├── arima_model.py                    # per-series SARIMA, one-step-ahead walk-forward eval, MLflow logging
+│   │   ├── lstm_model.py                     # PyTorch windowing + global LSTM, one-step-ahead eval, MLflow logging
+│   │   ├── evaluate.py                       # MAE / RMSE / sMAPE / MASE metrics, shared per-series scale
+│   │   └── backtest.py                       # 2-origin chronological robustness check
 │   ├── inventory/
 │   │   ├── policies.py                       # safety stock / reorder point / EOQ formulas (planned)
 │   │   └── simulate.py                       # day-step inventory simulation across policies (planned)
@@ -64,13 +64,13 @@ Retail Store Inventory/
 │       └── plots.py                          # shared matplotlib/plotly helpers (planned)
 │
 ├── models/
-│   ├── arima/                                # pickled per-series SARIMA fits (gitignored)
-│   └── lstm/                                 # PyTorch checkpoints + scalers (gitignored)
+│   ├── arima/                                # orders.csv (chosen SARIMA orders per series, gitignored)
+│   └── lstm/                                 # lstm.pt checkpoint + per-series scalers (gitignored)
 │
-├── mlruns/                                   # MLflow experiment-tracking store — every ARIMA/LSTM run logged here (gitignored)
+├── mlflow.db + mlruns/                       # MLflow experiment tracking (sqlite backend) — forecasting_arima (10 runs) + forecasting_lstm (1 run) logged (gitignored)
 │
 ├── reports/
-│   ├── figures/                              # PNG charts produced by notebooks (EDA figures already populated)
+│   ├── figures/                              # PNG charts produced by notebooks (EDA + forecasting figures populated)
 │   ├── forecasting_report.md                 # Stage 6 write-up (planned)
 │   ├── inventory_report.md                   # Stage 6 write-up (planned)
 │   └── pricing_report.md                     # Stage 6 write-up (planned)
@@ -86,8 +86,8 @@ Retail Store Inventory/
 └── README.md
 ```
 
-Items marked **(planned)** are the remaining Stage 4–6 work; everything else already exists and runs end-to-end
-(see [Status](#status)).
+Items marked **(planned)** are the remaining Stage 4b/4c/6 work; everything else already exists and runs
+end-to-end (see [Status](#status)).
 
 ---
 
@@ -176,17 +176,29 @@ save `features_full.parquet` → time split → leakage/overlap assertions → s
 `tests/test_features.py` and `tests/test_splits.py` (8 tests) assert lag/rolling correctness, subset
 selection correctness, and zero-overlap splits — run before trusting any downstream model output.
 
-### Stage 4 — Modeling *(in progress)*
+### Stage 4 — Modeling *(4a done, 4b/4c in progress)*
 
 Three tracks built on Stage 3's output:
 
-- **4a. Forecasting** (`src/forecasting/`) — naive/seasonal-naive/dataset baselines, per-series SARIMA
-  (`pmdarima.auto_arima`, seasonal period 7), and a global PyTorch LSTM (28-day window, store/product-aware,
-  Huber loss, early stopping). Every run logged to MLflow so the ARIMA-vs-LSTM comparison is reproducible.
-- **4b. Inventory Optimization** (`src/inventory/`) — consumes Track 1's forecast + backtested residual
-  std as demand uncertainty; computes safety stock / reorder point / EOQ; simulates stockout rate and
-  holding cost across policies (historical baseline vs. naive-forecast-driven vs. LSTM-forecast-driven).
-- **4c. Dynamic Pricing** (`src/pricing/`) — log-log elasticity regression per Category, discount
+- **4a. Forecasting** (`src/forecasting/`, done) — naive/seasonal-naive/dataset baselines, per-series SARIMA
+  (`pmdarima.auto_arima`, seasonal period 7), and a global PyTorch LSTM (28-day window, Huber loss, early
+  stopping) trained once across all scoped series rather than per series. Both models are evaluated
+  **one-step-ahead with true history** (walk-forward: predict 1 day, then feed the model the true observed
+  value before predicting the next day) — an apples-to-apples protocol, not "LSTM gets true history while
+  ARIMA gets a harder recursive rollout" or vice versa. Every SARIMA run (10 series) and the LSTM training run
+  are logged to MLflow (`forecasting_arima`, `forecasting_lstm` experiments).
+
+  **Result**: LSTM MASE 0.709 vs. SARIMA MASE 0.722 — LSTM wins, and a Diebold-Mariano test confirms the gap
+  is statistically significant (p < 0.001). Both comfortably beat the naive (0.941) and seasonal-naive (0.978)
+  baselines. The dataset's own `Demand Forecast` column scores implausibly well (MASE 0.066) — reported
+  transparently in `12_forecast_comparison.ipynb` as a likely artifact of how the synthetic dataset was
+  generated, not a benchmark either model was realistically expected to beat.
+
+- **4b. Inventory Optimization** (`src/inventory/`, planned) — will consume Track 1's LSTM forecast +
+  backtested residual std as demand uncertainty; compute safety stock / reorder point / EOQ; simulate
+  stockout rate and holding cost across policies (historical baseline vs. naive-forecast-driven vs.
+  LSTM-forecast-driven).
+- **4c. Dynamic Pricing** (`src/pricing/`, planned) — log-log elasticity regression per Category, discount
   effectiveness analysis, and a bounded grid search maximizing `price × predicted_demand`. Independent of
   Track 1, can run in parallel once Stage 3 is done.
 
@@ -228,10 +240,10 @@ Run the test suite before trusting any pipeline output:
 pytest tests/ -q
 ```
 
-Inspect experiment runs once Stage 4a has logged any:
+Inspect experiment runs (SARIMA per-series + LSTM training) logged by Stage 4a:
 
 ```bash
-mlflow ui --backend-store-uri file:./mlruns
+mlflow ui --backend-store-uri sqlite:///mlflow.db
 ```
 
 ### Scope: subset vs. full 100 series
@@ -247,7 +259,7 @@ identical pipeline on all 100 series — no code changes needed elsewhere.
 - [x] Stage 1 — Business understanding (this README)
 - [x] Stage 2 — Data understanding / EDA
 - [x] Stage 3 — Data preparation (shared feature pipeline)
-- [ ] Stage 4a — Forecasting (SARIMA vs PyTorch LSTM, MLflow-tracked)
+- [x] Stage 4a — Forecasting (SARIMA vs PyTorch LSTM, MLflow-tracked — LSTM wins, MASE 0.709 vs 0.722, p < 0.001)
 - [ ] Stage 4b — Inventory optimization
 - [ ] Stage 4c — Dynamic pricing
 - [ ] Stage 5 — Evaluation

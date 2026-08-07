@@ -17,7 +17,10 @@ LSTM_DIR = MODELS_DIR / "lstm"
 REPORTS_DIR = ROOT / "reports"
 FIGURES_DIR = REPORTS_DIR / "figures"
 
-MLFLOW_TRACKING_URI = f"file:{ROOT / 'mlruns'}"
+# MLflow 3.x deprecated the plain file-store backend ("file:./mlruns"); use a
+# local sqlite backend for run/param/metric metadata instead. Artifacts
+# (model checkpoints etc.) still land in ./mlruns via the default artifact store.
+MLFLOW_TRACKING_URI = f"sqlite:///{ROOT / 'mlflow.db'}"
 
 RANDOM_SEED = 42
 
