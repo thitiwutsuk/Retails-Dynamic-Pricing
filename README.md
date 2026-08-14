@@ -1,5 +1,15 @@
 # Retails-Dynamic-Pricing
 
+[![Python](https://img.shields.io/badge/Python-3.13-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![pandas](https://img.shields.io/badge/pandas-2.x-150458?logo=pandas&logoColor=white)](https://pandas.pydata.org/)
+[![NumPy](https://img.shields.io/badge/NumPy-2.x-013243?logo=numpy&logoColor=white)](https://numpy.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-LSTM-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![statsmodels](https://img.shields.io/badge/statsmodels-SARIMA-8CAAE6?logo=python&logoColor=white)](https://www.statsmodels.org/)
+[![scikit-learn](https://img.shields.io/badge/scikit--learn-1.x-F7931E?logo=scikitlearn&logoColor=white)](https://scikit-learn.org/)
+[![MLflow](https://img.shields.io/badge/MLflow-experiment%20tracking-0194E2?logo=mlflow&logoColor=white)](https://mlflow.org/)
+[![Jupyter](https://img.shields.io/badge/Jupyter-notebook-F37626?logo=jupyter&logoColor=white)](https://jupyter.org/)
+[![pytest](https://img.shields.io/badge/pytest-8%20passed-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org/)
+
 End-to-end data science project on a single retail panel dataset (`data/raw/retail_store_inventory.csv`):
 **5 stores × 20 products × 731 daily dates** (2022-01-01 to 2024-01-01), **73,100 rows**, no missing values,
 15 raw columns (Date, Store ID, Product ID, Category, Region, Inventory Level, Units Sold, Units Ordered,
