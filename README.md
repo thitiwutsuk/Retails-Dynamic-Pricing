@@ -31,16 +31,9 @@ Retail Store Inventory/
 │       ├── test.parquet                      # 2023-10-01 -> 2024-01-01 (held out, touched only for final evaluation)
 │       └── forecasts/                        # baseline/arima/lstm forecast outputs from Stage 4a
 │
-├── notebooks/                                # notebooks import from src/, never the other way around
-│   ├── 00_data_audit.ipynb                   # Stage 2a — structural/quality checks, produces cleaned_panel.parquet
-│   ├── 01_eda.ipynb                          # Stage 2b — exploratory analysis, produces reports/figures/*.png
-│   ├── 02_data_preparation.ipynb             # Stage 3 — feature engineering + train/val/test split
-│   ├── 10_arima_baseline.ipynb               # Stage 4a — naive/seasonal-naive/dataset baselines + per-series SARIMA
-│   ├── 11_lstm_forecasting.ipynb             # Stage 4a — PyTorch global LSTM, trained + evaluated
-│   ├── 12_forecast_comparison.ipynb          # Stage 5 (embedded) — ARIMA vs LSTM vs baselines, MASE + Diebold-Mariano
-│   ├── 20_inventory_optimization.ipynb       # Stage 4b — safety stock / ROP / EOQ + simulation (planned)
-│   ├── 30_price_elasticity.ipynb             # Stage 4c — log-log elasticity regression (planned)
-│   └── 31_dynamic_pricing_optimization.ipynb # Stage 4c — revenue-maximizing price search (planned)
+├── notebooks/                                # imports from src/, never the other way around
+│   └── full_pipeline_th.ipynb                # single notebook, Thai explanations, Stage 1 -> 4a end-to-end (runs top-to-bottom);
+│                                              #   Stage 4b/4c will be appended here too, not split into new files
 │
 ├── src/                                      # reusable, tested pipeline code — the source of truth; notebooks call into this
 │   ├── config.py                             # paths, random seed, TARGET_COL, split dates, N_SERIES_SUBSET scope flag
@@ -112,9 +105,10 @@ comparison matters more than any one challenge in isolation.
 
 ### Stage 2 — Data Understanding (EDA)
 
-Run once, shared by all three challenges. Two notebooks:
+Run once, shared by all three challenges. Covered by the "Stage 2a / 2b" sections of
+`notebooks/full_pipeline_th.ipynb`:
 
-**`00_data_audit.ipynb`** — structural/quality checks before anything else:
+**Data audit** — structural/quality checks before anything else:
 - Confirms the panel is a full dense grid: every (Store ID, Product ID) pair has exactly one row per date,
   731 dates × 100 series = 73,100 rows, no gaps and no duplicates.
 - Verifies zero missing values across all 15 columns.
@@ -123,7 +117,7 @@ Run once, shared by all three challenges. Two notebooks:
 - Casts dtypes (categoricals, int8 flags, real datetime) via `src/data/clean.py:clean_panel()` and persists
   the result to `data/interim/cleaned_panel.parquet` so no other notebook repeats this work.
 
-**`01_eda.ipynb`** — analysis pass that drives Stage 3's feature choices:
+**EDA analysis pass** — drives Stage 3's feature choices:
 - Target behavior: daily total trend, average `Units Sold` by day-of-week (weekly seasonality is visible),
   by Category, and the effect of `Holiday/Promotion` / `Weather Condition`.
 - Compares the dataset's own `Demand Forecast` against actual `Units Sold` (correlation + MAE) to
@@ -171,10 +165,11 @@ series, no shuffling:
 
 This exact split is reused unmodified by the Inventory simulation and Pricing evaluation stages.
 
-**`02_data_preparation.ipynb`** runs the full stage end-to-end: scope selection → feature engineering →
-save `features_full.parquet` → time split → leakage/overlap assertions → save `train/val/test.parquet`.
-`tests/test_features.py` and `tests/test_splits.py` (8 tests) assert lag/rolling correctness, subset
-selection correctness, and zero-overlap splits — run before trusting any downstream model output.
+The "Stage 3" section of `full_pipeline_th.ipynb` runs the full stage end-to-end: scope selection → feature
+engineering → save `features_full.parquet` → time split → leakage/overlap assertions → save
+`train/val/test.parquet`. `tests/test_features.py` and `tests/test_splits.py` (8 tests) assert lag/rolling
+correctness, subset selection correctness, and zero-overlap splits — run before trusting any downstream
+model output.
 
 ### Stage 4 — Modeling *(4a done, 4b/4c in progress)*
 
@@ -191,8 +186,8 @@ Three tracks built on Stage 3's output:
   **Result**: LSTM MASE 0.709 vs. SARIMA MASE 0.722 — LSTM wins, and a Diebold-Mariano test confirms the gap
   is statistically significant (p < 0.001). Both comfortably beat the naive (0.941) and seasonal-naive (0.978)
   baselines. The dataset's own `Demand Forecast` column scores implausibly well (MASE 0.066) — reported
-  transparently in `12_forecast_comparison.ipynb` as a likely artifact of how the synthetic dataset was
-  generated, not a benchmark either model was realistically expected to beat.
+  transparently in the "Stage 5" section of `full_pipeline_th.ipynb` as a likely artifact of how the
+  synthetic dataset was generated, not a benchmark either model was realistically expected to beat.
 
 - **4b. Inventory Optimization** (`src/inventory/`, planned) — will consume Track 1's LSTM forecast +
   backtested residual std as demand uncertainty; compute safety stock / reorder point / EOQ; simulate
@@ -225,14 +220,10 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run notebooks in order — each one only depends on the outputs of the ones before it:
-
-```
-00_data_audit → 01_eda → 02_data_preparation →
-10_arima_baseline → 11_lstm_forecasting → 12_forecast_comparison →
-20_inventory_optimization →
-30_price_elasticity → 31_dynamic_pricing_optimization
-```
+Run `notebooks/full_pipeline_th.ipynb` top to bottom — it covers Stage 1 through the current end of Stage 4a
+in one pass (Thai-language explanations throughout). Stage 4b (inventory) and 4c (pricing) will be appended
+to the same notebook as later sections rather than split into new files, so the whole project stays in one
+place.
 
 Run the test suite before trusting any pipeline output:
 
