@@ -129,8 +129,9 @@ Run once, shared by all three challenges. Covered by the "Stage 2a / 2b" section
   by Category — these directly become the elasticity model's feature set in Challenge 3.
 - Identifies representative high-volume / low-volume series to use as running examples in later notebooks.
 
-Output: 7 charts saved to `reports/figures/`, plus the EDA findings that justify every feature built in
-Stage 3.
+Output: 4 EDA charts saved to `reports/figures/` (daily trend, day-of-week, Category, price-gap/discount),
+plus the EDA findings — printed inline as text (correlation, censoring share) rather than charted — that
+justify every feature built in Stage 3.
 
 ### Stage 3 — Data Preparation
 
