@@ -15,6 +15,30 @@ one shared pipeline:
 
 ---
 
+## Problem Statement
+
+A retailer selling many products across many stores has to keep making three interlinked decisions, every
+day, for every store-product pair: **how much will sell, how much stock to hold, and what price to charge**.
+Getting any one wrong has a direct, measurable cost — understocking loses sales, overstocking ties up capital
+in inventory that sits on a shelf, and a mispriced product leaves revenue on the table. This project takes one
+retail sales dataset and uses it to answer three concrete questions, in order, since each builds on the one
+before it:
+
+1. **Can a deep learning model (LSTM) forecast daily demand more accurately than a classical statistical
+   model (SARIMA)** — measured on the same held-out period, with the same error metric, so the comparison is
+   fair rather than anecdotal?
+2. **Given that forecast (and its uncertainty), what reorder point / order quantity policy minimizes
+   stockouts without swinging too far into costly overstock?**
+3. **Given how demand responds to price, discount, and competitor pricing, what price recommendation
+   maximizes revenue** rather than being set on intuition alone?
+
+The dataset's own `Demand Forecast` column represents "what a naive/existing approach already achieves" —
+it exists in the data specifically so this project has an external benchmark to beat, not a shortcut to
+reuse. See [Stage 1 below](#stage-1--business-understanding) for how each question is turned into a
+measurable target and success metric.
+
+---
+
 ## Project Structure
 
 ```
@@ -23,17 +47,17 @@ Retail Store Inventory/
 │   ├── raw/
 │   │   └── retail_store_inventory.csv        # original file, treated as immutable, never overwritten
 │   ├── interim/
-│   │   └── cleaned_panel.parquet             # output of Stage 2 audit: typed, validated, sorted panel (gitignored, regenerate via 00_data_audit.ipynb)
+│   │   └── cleaned_panel.parquet             # output of the Stage 2 audit: typed, validated, sorted panel (gitignored, regenerate by rerunning the notebook)
 │   └── processed/
-│       ├── features_full.parquet             # output of Stage 3: full engineered feature set (gitignored, regenerate via 02_data_preparation.ipynb)
+│       ├── features_full.parquet             # output of Stage 3: full engineered feature set (gitignored, regenerate by rerunning the notebook)
 │       ├── train.parquet                     # 2022-01-01 -> 2023-06-30
 │       ├── val.parquet                       # 2023-07-01 -> 2023-09-30
 │       ├── test.parquet                      # 2023-10-01 -> 2024-01-01 (held out, touched only for final evaluation)
 │       └── forecasts/                        # baseline/arima/lstm forecast outputs from Stage 4a
 │
-├── notebooks/                                # imports from src/, never the other way around
-│   └── full_pipeline_th.ipynb                # single notebook, Thai explanations, Stage 1 -> 4a end-to-end (runs top-to-bottom);
-│                                              #   Stage 4b/4c will be appended here too, not split into new files
+├── notebooks/                                 # imports from src/, never the other way around
+│   └── retail_demand_forecasting.ipynb        # single notebook, Thai explanations, Stage 1 -> 4a end-to-end (runs top-to-bottom);
+│                                               #   Stage 4b/4c will be appended here too, not split into new files
 │
 ├── src/                                      # reusable, tested pipeline code — the source of truth; notebooks call into this
 │   ├── config.py                             # paths, random seed, TARGET_COL, split dates, N_SERIES_SUBSET scope flag
@@ -106,7 +130,7 @@ comparison matters more than any one challenge in isolation.
 ### Stage 2 — Data Understanding (EDA)
 
 Run once, shared by all three challenges. Covered by the "Stage 2a / 2b" sections of
-`notebooks/full_pipeline_th.ipynb`:
+`notebooks/retail_demand_forecasting.ipynb`:
 
 **Data audit** — structural/quality checks before anything else:
 - Confirms the panel is a full dense grid: every (Store ID, Product ID) pair has exactly one row per date,
@@ -166,7 +190,7 @@ series, no shuffling:
 
 This exact split is reused unmodified by the Inventory simulation and Pricing evaluation stages.
 
-The "Stage 3" section of `full_pipeline_th.ipynb` runs the full stage end-to-end: scope selection → feature
+The "Stage 3" section of `retail_demand_forecasting.ipynb` runs the full stage end-to-end: scope selection → feature
 engineering → save `features_full.parquet` → time split → leakage/overlap assertions → save
 `train/val/test.parquet`. `tests/test_features.py` and `tests/test_splits.py` (8 tests) assert lag/rolling
 correctness, subset selection correctness, and zero-overlap splits — run before trusting any downstream
@@ -187,7 +211,7 @@ Three tracks built on Stage 3's output:
   **Result**: LSTM MASE 0.709 vs. SARIMA MASE 0.722 — LSTM wins, and a Diebold-Mariano test confirms the gap
   is statistically significant (p < 0.001). Both comfortably beat the naive (0.941) and seasonal-naive (0.978)
   baselines. The dataset's own `Demand Forecast` column scores implausibly well (MASE 0.066) — reported
-  transparently in the "Stage 5" section of `full_pipeline_th.ipynb` as a likely artifact of how the
+  transparently in the "Stage 5" section of `retail_demand_forecasting.ipynb` as a likely artifact of how the
   synthetic dataset was generated, not a benchmark either model was realistically expected to beat.
 
 - **4b. Inventory Optimization** (`src/inventory/`, planned) — will consume Track 1's LSTM forecast +
@@ -221,7 +245,7 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run `notebooks/full_pipeline_th.ipynb` top to bottom — it covers Stage 1 through the current end of Stage 4a
+Run `notebooks/retail_demand_forecasting.ipynb` top to bottom — it covers Stage 1 through the current end of Stage 4a
 in one pass (Thai-language explanations throughout). Stage 4b (inventory) and 4c (pricing) will be appended
 to the same notebook as later sections rather than split into new files, so the whole project stays in one
 place.
