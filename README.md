@@ -82,11 +82,11 @@ Retail Store Inventory/
 │   │   ├── evaluate.py                       # MAE / RMSE / sMAPE / MASE metrics, shared per-series scale
 │   │   └── backtest.py                       # 2-origin chronological robustness check
 │   ├── inventory/
-│   │   ├── policies.py                       # safety stock / reorder point / EOQ formulas (planned)
-│   │   └── simulate.py                       # day-step inventory simulation across policies (planned)
+│   │   ├── policies.py                       # safety stock / reorder point / EOQ formulas
+│   │   └── simulate.py                       # day-step inventory simulation across policies
 │   ├── pricing/
-│   │   ├── elasticity.py                     # log-log demand elasticity regression (planned)
-│   │   └── optimize.py                       # revenue-maximizing price search (planned)
+│   │   ├── elasticity.py                     # log-log demand elasticity regression per Category
+│   │   └── optimize.py                       # revenue-maximizing price search (bounded grid search)
 │   └── viz/
 │       └── plots.py                          # shared matplotlib/plotly helpers (planned)
 │
@@ -97,7 +97,7 @@ Retail Store Inventory/
 ├── mlflow.db + mlruns/                       # MLflow experiment tracking (sqlite backend) — forecasting_arima (10 runs) + forecasting_lstm (1 run) logged (gitignored)
 │
 ├── reports/
-│   ├── figures/                              # PNG charts produced by notebooks (EDA + forecasting figures populated)
+│   ├── figures/                              # PNG charts produced by the notebook (EDA, forecasting, inventory, pricing)
 │   ├── forecasting_report.md                 # Stage 6 write-up (planned)
 │   ├── inventory_report.md                   # Stage 6 write-up (planned)
 │   └── pricing_report.md                     # Stage 6 write-up (planned)
@@ -105,15 +105,15 @@ Retail Store Inventory/
 ├── tests/                                    # pytest — run before trusting any pipeline output
 │   ├── test_features.py                      # lag/rolling leakage checks, subset-selection correctness, one-hot correctness
 │   ├── test_splits.py                        # train/val/test cover every row exactly once, zero date overlap
-│   ├── test_inventory_policies.py            # EOQ/ROP formula correctness on hand-checked cases (planned)
-│   └── test_elasticity.py                    # elasticity model diagnostics (planned)
+│   ├── test_inventory_policies.py            # EOQ/ROP formula correctness on hand-checked cases
+│   └── test_elasticity.py                    # elasticity sign/magnitude recovery on synthetic data, price-bound guardrails
 │
 ├── requirements.txt
 ├── .gitignore
 └── README.md
 ```
 
-Items marked **(planned)** are the remaining Stage 4b/4c/6 work; everything else already exists and runs
+Items marked **(planned)** are the remaining Stage 6 work; everything else already exists and runs
 end-to-end (see [Status](#status)).
 
 ---
@@ -224,21 +224,49 @@ Three tracks built on Stage 3's output:
   transparently in the "Stage 5" section of `retail_demand_forecasting.ipynb` as a likely artifact of how the
   synthetic dataset was generated, not a benchmark either model was realistically expected to beat.
 
-- **4b. Inventory Optimization** (`src/inventory/`, planned) — will consume Track 1's LSTM forecast +
-  backtested residual std as demand uncertainty; compute safety stock / reorder point / EOQ; simulate
-  stockout rate and holding cost across policies (historical baseline vs. naive-forecast-driven vs.
-  LSTM-forecast-driven).
-- **4c. Dynamic Pricing** (`src/pricing/`, planned) — log-log elasticity regression per Category, discount
-  effectiveness analysis, and a bounded grid search maximizing `price × predicted_demand`. Independent of
-  Track 1, can run in parallel once Stage 3 is done.
+- **4b. Inventory Optimization** (`src/inventory/`, done) — consumes Track 1's forecasts + their backtested
+  residual std as demand uncertainty; computes safety stock / reorder point / EOQ (5-day lead time, $50
+  ordering cost, 20%/year holding cost, 95% service level — all explicit assumptions, since the raw data has
+  no cost/lead-time columns); day-step-simulates 3 policies against **actual realized demand** in the test
+  window: the historical policy (read straight off the data, no simulation), a naive-forecast-driven ROP/EOQ
+  policy, and an LSTM-forecast-driven ROP/EOQ policy.
 
-### Stage 5 — Evaluation *(planned)*
+  **Result — and an honest surprise**: the LSTM-driven policy has a *higher* stockout rate (14.4%) than the
+  naive-driven one (11.6%), despite LSTM having the better MASE. Diagnosed rather than glossed over: Naive's
+  average forecast is essentially unbiased (144.1 vs. a true mean of 144.2) but very noisy (σ ≈ 152), so its
+  reorder point ends up generously padded by a large safety-stock term — fewer stockouts, but the highest
+  holding cost of the three policies. LSTM's day-to-day predictions are genuinely tighter (σ ≈ 110) but its
+  *average* forecast is biased about 6% low (135.6 vs. 144.2) — a known failure mode of Huber/MSE-trained
+  sequence models on spiky demand (they hedge toward the mean instead of chasing spikes). Since the reorder
+  point formula is driven directly by the forecast's mean, that low bias undersizes it regardless of how tight
+  the day-to-day error is. **Takeaway**: MASE alone doesn't certify a forecast as safe to drive inventory
+  decisions — bias needs to be checked and corrected first. Verified in the "Stage 4b" bias-check cell of
+  `retail_demand_forecasting.ipynb` (`data/processed/inventory_forecast_bias_check.csv`).
+
+- **4c. Dynamic Pricing** (`src/pricing/`, done) — log-log elasticity regression per Category
+  (`log(Units Sold+1) ~ log(Price) + discount_pct + log(Competitor Pricing) + controls`), a VIF
+  multicollinearity check, and a bounded grid search maximizing `price × predicted_demand` (±20% of current
+  price, never outside the category's observed historical range).
+
+  **Result — reported transparently rather than hidden**: VIF for `log_price` / `log_competitor_price` is
+  ~41 (severe multicollinearity — Price and Competitor Pricing move together too tightly in this dataset to
+  separate their individual effects), R² is under 2% in every category, and 3 of 5 categories come back with
+  a *positive* elasticity coefficient (economically backwards), none of it statistically significant except
+  one wrong-signed case. **Conclusion stated plainly in the notebook**: the elasticity estimates and price
+  recommendations from this dataset are not reliable enough to act on — the pipeline is a correct
+  demonstration of the methodology (fit → diagnose → optimize → guardrail), not a production-ready
+  recommendation. A fix path is noted (drop one of the two collinear price variables, or use `price_gap`
+  instead of both) rather than left as an open question.
+
+### Stage 5 — Evaluation
 
 Every track judged on the same Stage 3 test window: **MASE** as the primary forecasting metric (scale-free
-across heterogeneous series) with rolling-origin backtesting and an optional Diebold-Mariano significance
-test; stockout-rate vs. holding-cost tradeoff curves for inventory policies, validated against actual
-`Units Sold`; elasticity sign/magnitude sanity checks and historical-range validation for pricing
-recommendations.
+across heterogeneous series), with a Diebold-Mariano significance test for the ARIMA-vs-LSTM verdict;
+stockout-rate vs. holding-cost tradeoff simulated against actual `Units Sold` for the inventory policies
+(including a service-level 90/95/99% sensitivity curve); VIF and R² diagnostics plus historical-range
+guardrails for the pricing recommendations. All three tracks' honest caveats (the `Demand Forecast` benchmark,
+the LSTM forecast-bias finding, and the pricing multicollinearity finding) are reported directly in
+`retail_demand_forecasting.ipynb` rather than only in this README.
 
 ### Stage 6 — Reporting *(planned)*
 
@@ -255,10 +283,9 @@ python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run `notebooks/retail_demand_forecasting.ipynb` top to bottom — it covers Stage 1 through the current end of Stage 4a
-in one pass (Thai-language explanations throughout). Stage 4b (inventory) and 4c (pricing) will be appended
-to the same notebook as later sections rather than split into new files, so the whole project stays in one
-place.
+Run `notebooks/retail_demand_forecasting.ipynb` top to bottom — it covers Stage 1 through Stage 4c end to end
+in one pass (Thai-language explanations throughout). Stage 6 (reporting) will be appended to the same notebook
+as a later section rather than split into a new file, so the whole project stays in one place.
 
 Run the test suite before trusting any pipeline output:
 
@@ -286,7 +313,7 @@ identical pipeline on all 100 series — no code changes needed elsewhere.
 - [x] Stage 2 — Data understanding / EDA
 - [x] Stage 3 — Data preparation (shared feature pipeline)
 - [x] Stage 4a — Forecasting (SARIMA vs PyTorch LSTM, MLflow-tracked — LSTM wins, MASE 0.709 vs 0.722, p < 0.001)
-- [ ] Stage 4b — Inventory optimization
-- [ ] Stage 4c — Dynamic pricing
-- [ ] Stage 5 — Evaluation
+- [x] Stage 4b — Inventory optimization (3-policy simulation — surfaced and diagnosed an LSTM forecast-bias finding)
+- [x] Stage 4c — Dynamic pricing (elasticity + price optimization — surfaced a multicollinearity finding, reported honestly as not production-ready)
+- [x] Stage 5 — Evaluation (MASE/Diebold-Mariano, inventory trade-off simulation, VIF/R² diagnostics — all embedded in the Stage 4 sections above)
 - [ ] Stage 6 — Reporting / synthesis
