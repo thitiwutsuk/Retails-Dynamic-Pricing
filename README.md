@@ -94,13 +94,13 @@ Retail Store Inventory/
 │   ├── arima/                                # orders.csv (chosen SARIMA orders per series, gitignored)
 │   └── lstm/                                 # lstm.pt checkpoint + per-series scalers (gitignored)
 │
-├── mlflow.db + mlruns/                       # MLflow experiment tracking (sqlite backend) — forecasting_arima (10 runs) + forecasting_lstm (1 run) logged (gitignored)
+├── mlflow.db + mlruns/                       # MLflow experiment tracking (sqlite backend) — forecasting_arima + forecasting_lstm runs logged (gitignored)
 │
 ├── reports/
 │   ├── figures/                              # PNG charts produced by the notebook (EDA, forecasting, inventory, pricing)
-│   ├── forecasting_report.md                 # Stage 6 write-up (planned)
-│   ├── inventory_report.md                   # Stage 6 write-up (planned)
-│   └── pricing_report.md                     # Stage 6 write-up (planned)
+│   ├── forecasting_report.md                 # LSTM vs SARIMA write-up
+│   ├── inventory_report.md                   # 3-policy comparison + LSTM forecast-bias finding write-up
+│   └── pricing_report.md                     # elasticity + pricing write-up, incl. the multicollinearity caveat
 │
 ├── tests/                                    # pytest — run before trusting any pipeline output
 │   ├── test_features.py                      # lag/rolling leakage checks, subset-selection correctness, one-hot correctness
@@ -113,8 +113,9 @@ Retail Store Inventory/
 └── README.md
 ```
 
-Items marked **(planned)** are the remaining Stage 6 work; everything else already exists and runs
-end-to-end (see [Status](#status)).
+The one remaining **(planned)** item is `src/viz/plots.py` — every chart in this project so far is plotted
+inline in the notebook rather than through a shared helper module; everything else in this tree exists and
+runs end-to-end (see [Status](#status)).
 
 ---
 
@@ -268,11 +269,16 @@ guardrails for the pricing recommendations. All three tracks' honest caveats (th
 the LSTM forecast-bias finding, and the pricing multicollinearity finding) are reported directly in
 `retail_demand_forecasting.ipynb` rather than only in this README.
 
-### Stage 6 — Reporting *(planned)*
+### Stage 6 — Reporting
 
-Per-challenge write-ups in `reports/`, an `mlflow ui` walkthrough of the logged ARIMA vs. LSTM comparison,
-and a closing synthesis note tying the three challenges together: better forecasts → better inventory
-decisions → informs pricing constraints.
+Per-challenge write-ups in `reports/{forecasting,inventory,pricing}_report.md`, an MLflow run-count walkthrough
+cell in the notebook, and a closing synthesis section tying the three challenges together: a better forecast
+(Stage 4a) did *not* automatically mean a better inventory outcome (Stage 4b) because of an undiagnosed
+forecast bias — the concrete lesson being that a model's headline accuracy metric has to be chosen (or
+supplemented) to match how the forecast will actually be used downstream, not judged in isolation. Pricing
+(Stage 4c) ran independently and surfaced its own data-quality caveat (severe multicollinearity). The
+through-line across all three: every stage's honest caveat was surfaced and reported directly rather than
+smoothed over for a cleaner-looking result.
 
 ---
 
@@ -316,4 +322,8 @@ identical pipeline on all 100 series — no code changes needed elsewhere.
 - [x] Stage 4b — Inventory optimization (3-policy simulation — surfaced and diagnosed an LSTM forecast-bias finding)
 - [x] Stage 4c — Dynamic pricing (elasticity + price optimization — surfaced a multicollinearity finding, reported honestly as not production-ready)
 - [x] Stage 5 — Evaluation (MASE/Diebold-Mariano, inventory trade-off simulation, VIF/R² diagnostics — all embedded in the Stage 4 sections above)
-- [ ] Stage 6 — Reporting / synthesis
+- [x] Stage 6 — Reporting / synthesis (MLflow run-count walkthrough, cross-challenge synthesis in the notebook, and standalone `reports/{forecasting,inventory,pricing}_report.md`)
+
+**Project complete: all 3 challenges (Forecasting, Inventory Optimization, Dynamic Pricing) built, evaluated,
+and reported end to end**, currently on a 10-series subset (`config.N_SERIES_SUBSET`) — flip it to `"all"` to
+rerun the identical pipeline on all 100 series.
