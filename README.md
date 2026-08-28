@@ -10,320 +10,92 @@
 [![Jupyter](https://img.shields.io/badge/Jupyter-notebook-F37626?logo=jupyter&logoColor=white)](https://jupyter.org/)
 [![pytest](https://img.shields.io/badge/pytest-8%20passed-0A9EDC?logo=pytest&logoColor=white)](https://pytest.org/)
 
-End-to-end data science project on a single retail panel dataset (`data/raw/retail_store_inventory.csv`):
-**5 stores × 20 products × 731 daily dates** (2022-01-01 to 2024-01-01), **73,100 rows**, no missing values,
-15 raw columns (Date, Store ID, Product ID, Category, Region, Inventory Level, Units Sold, Units Ordered,
-Demand Forecast, Price, Discount, Weather Condition, Holiday/Promotion, Competitor Pricing, Seasonality).
+End-to-end data science project solving three linked retail decisions — **demand forecasting**, **inventory
+optimization**, and **dynamic pricing** — on one panel dataset: 5 stores × 20 products × 731 days
+(2022-01-01 → 2024-01-01), 73,100 rows, no missing values.
 
-The project follows the standard data science lifecycle — **Business Understanding → Data Understanding →
-Data Preparation → Modeling → Evaluation → Reporting** — to solve three linked challenges built on top of
-one shared pipeline:
+## Problem
 
-1. **Demand Forecasting** — predict `Units Sold`; LSTM vs. classical ARIMA/SARIMA.
-2. **Inventory Optimization** — reorder point / order quantity policy that minimizes stockouts and overstock, built on Challenge 1's forecasts.
-3. **Dynamic Pricing** — revenue-maximizing price recommendation from estimated demand elasticity, competitor pricing, and discount behavior.
+For every (store, product) pair, three questions determine revenue and cost directly:
 
----
+1. **Forecasting** — does a global LSTM beat classical per-series SARIMA on held-out demand?
+2. **Inventory** — given that forecast and its uncertainty, what reorder policy minimizes stockouts without over-stocking?
+3. **Pricing** — given estimated demand elasticity, what price maximizes revenue?
 
-## Problem Statement
+The dataset's own `Demand Forecast` column is treated strictly as an external benchmark, never as a
+feature or target. All three challenges share one feature pipeline and are evaluated on the same held-out
+window: **2023-10-01 → 2024-01-01**.
 
-A retailer selling many products across many stores has to keep making three interlinked decisions, every
-day, for every store-product pair: **how much will sell, how much stock to hold, and what price to charge**.
-Getting any one wrong has a direct, measurable cost — understocking loses sales, overstocking ties up capital
-in inventory that sits on a shelf, and a mispriced product leaves revenue on the table. This project takes one
-retail sales dataset and uses it to answer three concrete questions, in order, since each builds on the one
-before it:
+## Results
 
-1. **Can a deep learning model (LSTM) forecast daily demand more accurately than a classical statistical
-   model (SARIMA)** — measured on the same held-out period, with the same error metric, so the comparison is
-   fair rather than anecdotal?
-2. **Given that forecast (and its uncertainty), what reorder point / order quantity policy minimizes
-   stockouts without swinging too far into costly overstock?**
-3. **Given how demand responds to price, discount, and competitor pricing, what price recommendation
-   maximizes revenue** rather than being set on intuition alone?
+| Challenge | Method | Result |
+|---|---|---|
+| Forecasting | Global LSTM vs. per-series SARIMA, one-step-ahead walk-forward | **LSTM MASE 0.709 vs. SARIMA 0.722** (Diebold-Mariano p<0.001); both beat naive (0.941) and seasonal-naive (0.978) |
+| Inventory | ROP/EOQ simulated against real demand, 3 policies | LSTM-driven policy has a *higher* stockout rate (14.4%) than naive-driven (11.6%) — a ~6% low bias in LSTM's mean forecast undersizes the reorder point despite its lower day-to-day error |
+| Pricing | Log-log elasticity regression + bounded grid search, per category | VIF ≈ 41 and R² < 2% in every category; 3 of 5 categories return economically backwards (positive) elasticity — recommendations not reliable enough to act on |
 
-The dataset's own `Demand Forecast` column represents "what a naive/existing approach already achieves" —
-it exists in the data specifically so this project has an external benchmark to beat, not a shortcut to
-reuse. See [Stage 1 below](#stage-1--business-understanding) for how each question is turned into a
-measurable target and success metric.
+Full write-ups: [`reports/forecasting_report.md`](reports/forecasting_report.md),
+[`reports/inventory_report.md`](reports/inventory_report.md), [`reports/pricing_report.md`](reports/pricing_report.md).
 
----
+**Takeaway**: a better accuracy metric (MASE) did not translate into a better downstream decision, because an
+undiagnosed forecast bias directly undersized the reorder point. Every stage's caveats are reported honestly
+rather than smoothed over.
 
 ## Project Structure
 
 ```
-Retail Store Inventory/
 ├── data/
-│   ├── raw/
-│   │   └── retail_store_inventory.csv        # original file, treated as immutable, never overwritten
-│   ├── interim/
-│   │   └── cleaned_panel.parquet             # output of the Stage 2 audit: typed, validated, sorted panel (gitignored, regenerate by rerunning the notebook)
-│   └── processed/
-│       ├── features_full.parquet             # output of Stage 3: full engineered feature set (gitignored, regenerate by rerunning the notebook)
-│       ├── train.parquet                     # 2022-01-01 -> 2023-06-30
-│       ├── val.parquet                       # 2023-07-01 -> 2023-09-30
-│       ├── test.parquet                      # 2023-10-01 -> 2024-01-01 (held out, touched only for final evaluation)
-│       └── forecasts/                        # baseline/arima/lstm forecast outputs from Stage 4a
+│   ├── raw/retail_store_inventory.csv        # immutable source file
+│   ├── interim/cleaned_panel.parquet          # typed, validated panel (gitignored)
+│   └── processed/                             # features_full + train/val/test.parquet + forecasts/
 │
-├── notebooks/                                 # imports from src/, never the other way around
-│   └── retail_demand_forecasting.ipynb        # single notebook, Thai explanations, Stage 1 -> 4a end-to-end (runs top-to-bottom);
-│                                               #   Stage 4b/4c will be appended here too, not split into new files
+├── notebooks/retail_demand_forecasting.ipynb  # single notebook, Thai explanations, runs top-to-bottom
 │
-├── src/                                      # reusable, tested pipeline code — the source of truth; notebooks call into this
-│   ├── config.py                             # paths, random seed, TARGET_COL, split dates, N_SERIES_SUBSET scope flag
-│   ├── data/
-│   │   ├── load.py                           # read_raw() / read_cleaned() / read_features() helpers
-│   │   ├── clean.py                          # clean_panel(): dtype casting + range validation (Stage 2)
-│   │   └── features.py                       # select_series(), engineer_features(), build_features_full() (Stage 3)
-│   ├── forecasting/
-│   │   ├── splits.py                         # time_split(): chronological train/val/test, reused by every stage
-│   │   ├── arima_model.py                    # per-series SARIMA, one-step-ahead walk-forward eval, MLflow logging
-│   │   ├── lstm_model.py                     # PyTorch windowing + global LSTM, one-step-ahead eval, MLflow logging
-│   │   ├── evaluate.py                       # MAE / RMSE / sMAPE / MASE metrics, shared per-series scale
-│   │   └── backtest.py                       # 2-origin chronological robustness check
-│   ├── inventory/
-│   │   ├── policies.py                       # safety stock / reorder point / EOQ formulas
-│   │   └── simulate.py                       # day-step inventory simulation across policies
-│   ├── pricing/
-│   │   ├── elasticity.py                     # log-log demand elasticity regression per Category
-│   │   └── optimize.py                       # revenue-maximizing price search (bounded grid search)
-│   └── viz/
-│       └── plots.py                          # shared matplotlib/plotly helpers (planned)
+├── src/                                       # tested pipeline code — source of truth
+│   ├── config.py                              # paths, seed, TARGET_COL, split dates, series scope
+│   ├── data/                                  # load.py, clean.py, features.py
+│   ├── forecasting/                           # splits.py, arima_model.py, lstm_model.py, evaluate.py, backtest.py
+│   ├── inventory/                             # policies.py (safety stock/ROP/EOQ), simulate.py
+│   └── pricing/                               # elasticity.py, optimize.py
 │
-├── models/
-│   ├── arima/                                # orders.csv (chosen SARIMA orders per series, gitignored)
-│   └── lstm/                                 # lstm.pt checkpoint + per-series scalers (gitignored)
-│
-├── mlflow.db + mlruns/                       # MLflow experiment tracking (sqlite backend) — forecasting_arima + forecasting_lstm runs logged (gitignored)
-│
-├── reports/
-│   ├── figures/                              # PNG charts produced by the notebook (EDA, forecasting, inventory, pricing)
-│   ├── forecasting_report.md                 # LSTM vs SARIMA write-up
-│   ├── inventory_report.md                   # 3-policy comparison + LSTM forecast-bias finding write-up
-│   └── pricing_report.md                     # elasticity + pricing write-up, incl. the multicollinearity caveat
-│
-├── tests/                                    # pytest — run before trusting any pipeline output
-│   ├── test_features.py                      # lag/rolling leakage checks, subset-selection correctness, one-hot correctness
-│   ├── test_splits.py                        # train/val/test cover every row exactly once, zero date overlap
-│   ├── test_inventory_policies.py            # EOQ/ROP formula correctness on hand-checked cases
-│   └── test_elasticity.py                    # elasticity sign/magnitude recovery on synthetic data, price-bound guardrails
-│
-├── requirements.txt
-├── .gitignore
-└── README.md
+├── models/{arima,lstm}/                       # fitted orders / checkpoint + scalers (gitignored)
+├── mlflow.db + mlruns/                        # experiment tracking (gitignored)
+├── reports/{figures,*.md}                     # per-challenge write-ups + charts
+├── tests/                                     # pytest — leakage, split-overlap, formula correctness
+└── requirements.txt
 ```
 
-The one remaining **(planned)** item is `src/viz/plots.py` — every chart in this project so far is plotted
-inline in the notebook rather than through a shared helper module; everything else in this tree exists and
-runs end-to-end (see [Status](#status)).
+## Pipeline
 
----
+1. **Business understanding** — each challenge mapped to a target and success metric (table above).
+2. **Data understanding** — audits the panel for a full dense grid and valid ranges; EDA surfaces weekly
+   seasonality and a demand-censoring signal (`Units Sold` capped by `Inventory Level`) that shapes later features.
+3. **Data preparation** — `src/data/features.py` builds calendar, lag/rolling (leakage-checked, shifted by 1
+   day), price, and inventory features once, shared by all three challenges. Chronological split: train ≤
+   2023-06-30, val ≤ 2023-09-30, test ≤ 2024-01-01.
+4. **Modeling** — SARIMA + global LSTM (forecasting) → ROP/EOQ simulation (inventory) → elasticity + price
+   search (pricing). See Results above.
+5. **Evaluation** — MASE + Diebold-Mariano (forecasting), stockout/holding-cost tradeoff + service-level
+   sensitivity (inventory), VIF/R² diagnostics (pricing) — all on the same test window.
+6. **Reporting** — per-challenge reports plus a cross-challenge synthesis in the notebook.
 
-## How each stage works
-
-### Stage 1 — Business Understanding
-
-Before touching any data, each challenge is turned into a precise, measurable problem so there's an
-unambiguous definition of "success" to test against later:
-
-| Challenge | Problem | Target | Success metric |
-|---|---|---|---|
-| 1. Demand Forecasting | Predict `Units Sold` per (Store ID, Product ID), 1-day and 7-day ahead | `Units Sold` | Beat SARIMA / seasonal-naive baselines on MASE |
-| 2. Inventory Optimization | Choose reorder point / order quantity per (Store ID, Product ID) from Challenge 1's forecast + its uncertainty | Stockout rate, holding cost | Lower stockout rate and/or total cost vs. the historical `Units Ordered` policy |
-| 3. Dynamic Pricing | Recommend a revenue-maximizing price per segment from estimated elasticity, competitor price, and discount behavior | `Price` recommendation | Positive expected revenue lift vs. historical average price, within a realistic price band |
-
-The dataset's own `Demand Forecast` column is treated strictly as an **external benchmark to beat** — it is
-never used as a model feature or target (that would leak a competing forecast into our own models). All three
-challenges are evaluated on the **same held-out test window** (2023-10-01 to 2024-01-01), since Challenge 2
-consumes Challenge 1's output and Challenge 3 shares the same feature pipeline — a fair, single point of
-comparison matters more than any one challenge in isolation.
-
-### Stage 2 — Data Understanding (EDA)
-
-Run once, shared by all three challenges. Covered by the "Stage 2a / 2b" sections of
-`notebooks/retail_demand_forecasting.ipynb`:
-
-**Data audit** — structural/quality checks before anything else:
-- Confirms the panel is a full dense grid: every (Store ID, Product ID) pair has exactly one row per date,
-  731 dates × 100 series = 73,100 rows, no gaps and no duplicates.
-- Verifies zero missing values across all 15 columns.
-- Range/sanity checks: Inventory Level / Units Sold / Units Ordered ≥ 0, Discount ∈ [0,100], Price and
-  Competitor Pricing > 0, Holiday/Promotion is strictly binary.
-- Casts dtypes (categoricals, int8 flags, real datetime) via `src/data/clean.py:clean_panel()` and persists
-  the result to `data/interim/cleaned_panel.parquet` so no other notebook repeats this work.
-
-**EDA analysis pass** — drives Stage 3's feature choices:
-- Target behavior: daily total trend, average `Units Sold` by day-of-week (weekly seasonality is visible),
-  by Category, and the effect of `Holiday/Promotion` / `Weather Condition`.
-- Compares the dataset's own `Demand Forecast` against actual `Units Sold` (correlation + MAE) to
-  characterize it as a benchmark, never a feature.
-- Flags a **demand-censoring caveat**: a measurable share of rows have `Units Sold` at or near
-  `Inventory Level`, suggesting stockouts may have suppressed true demand — carried forward explicitly into
-  later modeling decisions rather than ignored.
-- Pricing patterns: `Price` vs `Competitor Pricing` gap distribution, `Discount` vs `Units Sold` relationship
-  by Category — these directly become the elasticity model's feature set in Challenge 3.
-- Identifies representative high-volume / low-volume series to use as running examples in later notebooks.
-
-Output: 4 EDA charts saved to `reports/figures/` (daily trend, day-of-week, Category, price-gap/discount),
-plus the EDA findings — printed inline as text (correlation, censoring share) rather than charted — that
-justify every feature built in Stage 3.
-
-### Stage 3 — Data Preparation
-
-One reusable, pytest-covered pipeline consumed identically by all three challenges, so Forecasting,
-Inventory, and Pricing never diverge on feature definitions:
-
-**`src/data/features.py`**, computed per (Store ID, Product ID) group sorted by Date:
-- **Calendar features** — day-of-week, is-weekend, month, week-of-year, plus sin/cos cyclical encodings so
-  the model sees Sunday and Monday as adjacent rather than far apart.
-- **Lag features** — `Units Sold` shifted 1 / 7 / 14 / 28 days.
-- **Rolling features** — 7 / 14 / 28-day mean and std of `Units Sold`, rolling mean of `Inventory Level` and
-  `Discount`. Every rolling window is computed on data **shifted by 1 day first**, so a given day's own value
-  can never leak into its own rolling statistic — verified by `tests/test_features.py`.
-- **Price features** — `price_gap`, `price_gap_pct`, `discount_pct`, `effective_price`.
-- **Inventory features** — `days_of_supply`, a stockout proxy flag (from the Stage 2 censoring finding).
-- **One-hot encoding** — Category, Region, Weather Condition, Seasonality.
-- The dataset's `Demand Forecast` column is excluded from every feature set by design.
-
-**Scope control** — `src/config.py:N_SERIES_SUBSET` selects a subset of (Store ID, Product ID) pairs (int N
-= top-N by historical volume, a list of specific pairs, or `"all"`). Currently set to `10` for fast
-iteration; switching it to `"all"` reruns the identical pipeline on all 100 series with zero code changes
-elsewhere.
-
-**Chronological split** — `src/forecasting/splits.py:time_split()` applies identical cut dates to every
-series, no shuffling:
-
-| Split | Range | Purpose |
-|---|---|---|
-| Train | 2022-01-01 → 2023-06-30 | model fitting |
-| Validation | 2023-07-01 → 2023-09-30 | hyperparameter tuning / early stopping |
-| Test | 2023-10-01 → 2024-01-01 | final held-out evaluation, touched once |
-
-This exact split is reused unmodified by the Inventory simulation and Pricing evaluation stages.
-
-The "Stage 3" section of `retail_demand_forecasting.ipynb` runs the full stage end-to-end: scope selection → feature
-engineering → save `features_full.parquet` → time split → leakage/overlap assertions → save
-`train/val/test.parquet`. `tests/test_features.py` and `tests/test_splits.py` (8 tests) assert lag/rolling
-correctness, subset selection correctness, and zero-overlap splits — run before trusting any downstream
-model output.
-
-### Stage 4 — Modeling *(4a done, 4b/4c in progress)*
-
-Three tracks built on Stage 3's output:
-
-- **4a. Forecasting** (`src/forecasting/`, done) — naive/seasonal-naive/dataset baselines, per-series SARIMA
-  (`pmdarima.auto_arima`, seasonal period 7), and a global PyTorch LSTM (28-day window, Huber loss, early
-  stopping) trained once across all scoped series rather than per series. Both models are evaluated
-  **one-step-ahead with true history** (walk-forward: predict 1 day, then feed the model the true observed
-  value before predicting the next day) — an apples-to-apples protocol, not "LSTM gets true history while
-  ARIMA gets a harder recursive rollout" or vice versa. Every SARIMA run (10 series) and the LSTM training run
-  are logged to MLflow (`forecasting_arima`, `forecasting_lstm` experiments).
-
-  **Result**: LSTM MASE 0.709 vs. SARIMA MASE 0.722 — LSTM wins, and a Diebold-Mariano test confirms the gap
-  is statistically significant (p < 0.001). Both comfortably beat the naive (0.941) and seasonal-naive (0.978)
-  baselines. The dataset's own `Demand Forecast` column scores implausibly well (MASE 0.066) — reported
-  transparently in the "Stage 5" section of `retail_demand_forecasting.ipynb` as a likely artifact of how the
-  synthetic dataset was generated, not a benchmark either model was realistically expected to beat.
-
-- **4b. Inventory Optimization** (`src/inventory/`, done) — consumes Track 1's forecasts + their backtested
-  residual std as demand uncertainty; computes safety stock / reorder point / EOQ (5-day lead time, $50
-  ordering cost, 20%/year holding cost, 95% service level — all explicit assumptions, since the raw data has
-  no cost/lead-time columns); day-step-simulates 3 policies against **actual realized demand** in the test
-  window: the historical policy (read straight off the data, no simulation), a naive-forecast-driven ROP/EOQ
-  policy, and an LSTM-forecast-driven ROP/EOQ policy.
-
-  **Result — and an honest surprise**: the LSTM-driven policy has a *higher* stockout rate (14.4%) than the
-  naive-driven one (11.6%), despite LSTM having the better MASE. Diagnosed rather than glossed over: Naive's
-  average forecast is essentially unbiased (144.1 vs. a true mean of 144.2) but very noisy (σ ≈ 152), so its
-  reorder point ends up generously padded by a large safety-stock term — fewer stockouts, but the highest
-  holding cost of the three policies. LSTM's day-to-day predictions are genuinely tighter (σ ≈ 110) but its
-  *average* forecast is biased about 6% low (135.6 vs. 144.2) — a known failure mode of Huber/MSE-trained
-  sequence models on spiky demand (they hedge toward the mean instead of chasing spikes). Since the reorder
-  point formula is driven directly by the forecast's mean, that low bias undersizes it regardless of how tight
-  the day-to-day error is. **Takeaway**: MASE alone doesn't certify a forecast as safe to drive inventory
-  decisions — bias needs to be checked and corrected first. Verified in the "Stage 4b" bias-check cell of
-  `retail_demand_forecasting.ipynb` (`data/processed/inventory_forecast_bias_check.csv`).
-
-- **4c. Dynamic Pricing** (`src/pricing/`, done) — log-log elasticity regression per Category
-  (`log(Units Sold+1) ~ log(Price) + discount_pct + log(Competitor Pricing) + controls`), a VIF
-  multicollinearity check, and a bounded grid search maximizing `price × predicted_demand` (±20% of current
-  price, never outside the category's observed historical range).
-
-  **Result — reported transparently rather than hidden**: VIF for `log_price` / `log_competitor_price` is
-  ~41 (severe multicollinearity — Price and Competitor Pricing move together too tightly in this dataset to
-  separate their individual effects), R² is under 2% in every category, and 3 of 5 categories come back with
-  a *positive* elasticity coefficient (economically backwards), none of it statistically significant except
-  one wrong-signed case. **Conclusion stated plainly in the notebook**: the elasticity estimates and price
-  recommendations from this dataset are not reliable enough to act on — the pipeline is a correct
-  demonstration of the methodology (fit → diagnose → optimize → guardrail), not a production-ready
-  recommendation. A fix path is noted (drop one of the two collinear price variables, or use `price_gap`
-  instead of both) rather than left as an open question.
-
-### Stage 5 — Evaluation
-
-Every track judged on the same Stage 3 test window: **MASE** as the primary forecasting metric (scale-free
-across heterogeneous series), with a Diebold-Mariano significance test for the ARIMA-vs-LSTM verdict;
-stockout-rate vs. holding-cost tradeoff simulated against actual `Units Sold` for the inventory policies
-(including a service-level 90/95/99% sensitivity curve); VIF and R² diagnostics plus historical-range
-guardrails for the pricing recommendations. All three tracks' honest caveats (the `Demand Forecast` benchmark,
-the LSTM forecast-bias finding, and the pricing multicollinearity finding) are reported directly in
-`retail_demand_forecasting.ipynb` rather than only in this README.
-
-### Stage 6 — Reporting
-
-Per-challenge write-ups in `reports/{forecasting,inventory,pricing}_report.md`, an MLflow run-count walkthrough
-cell in the notebook, and a closing synthesis section tying the three challenges together: a better forecast
-(Stage 4a) did *not* automatically mean a better inventory outcome (Stage 4b) because of an undiagnosed
-forecast bias — the concrete lesson being that a model's headline accuracy metric has to be chosen (or
-supplemented) to match how the forecast will actually be used downstream, not judged in isolation. Pricing
-(Stage 4c) ran independently and surfaced its own data-quality caveat (severe multicollinearity). The
-through-line across all three: every stage's honest caveat was surfaced and reported directly rather than
-smoothed over for a cleaner-looking result.
-
----
-
-## Reproducing the pipeline
+## Reproducing
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-Run `notebooks/retail_demand_forecasting.ipynb` top to bottom — it covers Stage 1 through Stage 4c end to end
-in one pass (Thai-language explanations throughout). Stage 6 (reporting) will be appended to the same notebook
-as a later section rather than split into a new file, so the whole project stays in one place.
-
-Run the test suite before trusting any pipeline output:
+Run `notebooks/retail_demand_forecasting.ipynb` top to bottom (Stage 1 → 4c in one pass). Then:
 
 ```bash
-pytest tests/ -q
+pytest tests/ -q                                        # 8 tests: leakage, splits, formulas
+mlflow ui --backend-store-uri sqlite:///mlflow.db        # inspect SARIMA/LSTM runs
 ```
 
-Inspect experiment runs (SARIMA per-series + LSTM training) logged by Stage 4a:
-
-```bash
-mlflow ui --backend-store-uri sqlite:///mlflow.db
-```
-
-### Scope: subset vs. full 100 series
-
-`src/config.py:N_SERIES_SUBSET` controls how many (Store ID, Product ID) series the pipeline runs on.
-It starts at `10` (top-10 by historical volume) for fast iteration. Set it to `"all"` to re-run the
-identical pipeline on all 100 series — no code changes needed elsewhere.
-
----
+`src/config.py:N_SERIES_SUBSET` controls scope — `10` (top-volume series) by default for fast iteration,
+`"all"` reruns the identical pipeline on all 100 series with no other code changes.
 
 ## Status
 
-- [x] Stage 1 — Business understanding (this README)
-- [x] Stage 2 — Data understanding / EDA
-- [x] Stage 3 — Data preparation (shared feature pipeline)
-- [x] Stage 4a — Forecasting (SARIMA vs PyTorch LSTM, MLflow-tracked — LSTM wins, MASE 0.709 vs 0.722, p < 0.001)
-- [x] Stage 4b — Inventory optimization (3-policy simulation — surfaced and diagnosed an LSTM forecast-bias finding)
-- [x] Stage 4c — Dynamic pricing (elasticity + price optimization — surfaced a multicollinearity finding, reported honestly as not production-ready)
-- [x] Stage 5 — Evaluation (MASE/Diebold-Mariano, inventory trade-off simulation, VIF/R² diagnostics — all embedded in the Stage 4 sections above)
-- [x] Stage 6 — Reporting / synthesis (MLflow run-count walkthrough, cross-challenge synthesis in the notebook, and standalone `reports/{forecasting,inventory,pricing}_report.md`)
-
-**Project complete: all 3 challenges (Forecasting, Inventory Optimization, Dynamic Pricing) built, evaluated,
-and reported end to end**, currently on a 10-series subset (`config.N_SERIES_SUBSET`) — flip it to `"all"` to
-rerun the identical pipeline on all 100 series.
+All 3 challenges built, evaluated, and reported end to end, currently on a 10-series subset.
